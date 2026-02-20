@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Plugin
+metadata:
+  author: sheetung
+  name: langbot-pansou
+  repository: ''
+  version: 0.1.0
+  description:
+    en_US: 'Search resources on cloud storage'
+    zh_Hans: 通过网盘搜资源
+  label:
+    en_US: pansou
+    zh_Hans: 盘搜
+  icon: assets/icon.png
+spec:
+  config: 
+    - name: count_limit
+      type: integer
+      label:
+        en_US: 'Maximum Single pan Count'
+        zh_Hans: '最多单次网盘资源'
+      required: true
+      default: 3
+    - name: pansouapi
+      type: string
+      label:
+        en_US: 'pansou docker api'
+        zh_Hans: '网盘搜docker api'
+      required: true
+      default: 'http://127.0.0.1:8888'
+    - name: onebot_http_url
+      type: string
+      label:
+        en_US: 'OneBot HTTP API URL'
+        zh_Hans: 'OneBot HTTP API 地址'
+      required: true
+      default: 'http://127.0.0.1:3000'
+    - name: onebot_access_token
+      type: string
+      label:
+        en_US: 'OneBot Access Token'
+        zh_Hans: 'OneBot 访问令牌'
+      required: true
+      default: ''
+  components:
+    EventListener:
+      fromDirs:
+      - path: components/event_listener/
+execution:
+  python:
+    path: main.py
+    attr: pansou
