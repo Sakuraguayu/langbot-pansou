@@ -26,6 +26,8 @@ Trigger by entering keywords in private chat:盘搜 <keywords>
 
 Example:盘搜 蜡笔小新
 
+![](./assets/cfg1.png)
+
 # Planning
 
 # Bug Reports & Feature Requests

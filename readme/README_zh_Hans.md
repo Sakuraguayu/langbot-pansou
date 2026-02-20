@@ -28,6 +28,8 @@ http://localhost:8888
 
 例如：搜蜡笔小新
 
+![](./assets/cfg1.png)
+
 ## 规划
 
 
