@@ -42,6 +42,22 @@ spec:
         zh_Hans: 'OneBot 访问令牌'
       required: true
       default: ''
+    # ==================== 新增配置项 ====================
+    - name: default_cloud_types
+      type: string
+      label:
+        en_US: 'Default cloud types (e.g. quark)'
+        zh_Hans: '默认网盘类型（quark=夸克，默认只搜夸克）'
+      required: false
+      default: 'quark'
+    - name: enable_user_select
+      type: boolean
+      label:
+        en_US: 'Enable all resources mode'
+        zh_Hans: '启用全部资源模式（true=返回所有网盘，不过滤）'
+      required: false
+      default: false
+    # ===================================================
   components:
     EventListener:
       fromDirs:
