@@ -12,7 +12,6 @@ from langbot_plugin.api.entities.builtin.provider import message as provider_mes
 
 from utils.forward_message import ForwardMessageSender
 
-
 class DefaultEventListener(EventListener):
 
     async def initialize(self):
@@ -25,6 +24,11 @@ class DefaultEventListener(EventListener):
         self.pansou_api_url = config.get("pansouapi", "http://127.0.0.1:8888")
         self.onebot_http_url = config.get("onebot_http_url", "http://127.0.0.1:3000")
         self.onebot_access_token = config.get("onebot_access_token", "")
+
+        # ==================== 新增配置 ====================
+        self.default_cloud_types = config.get("default_cloud_types", "quark")
+        self.enable_user_select = config.get("enable_user_select", False)
+        # =================================================
 
         # 初始化合并转发消息发送器
         self.forward_sender = ForwardMessageSender(
@@ -48,18 +52,44 @@ class DefaultEventListener(EventListener):
                 await self.send_reply(event_context, "请输入搜索关键词，例如：盘搜 电影名")
                 return
 
-            # 发送搜索中提示
-            await self.send_reply(event_context, f"正在搜索：{keyword}...")
+            # ==================== 新增：支持指定网盘 + 默认夸克 ====================
+            cloud_types = None
+            search_keyword = keyword
+            if self.enable_user_select:
+                cloud_types = None  # 全部资源模式
+            else:
+                # 支持命令末尾加类型：盘搜 蜡笔小新 夸克 / 全部 / 阿里云 等
+                parts = keyword.rsplit(maxsplit=1)
+                if len(parts) == 2:
+                    possible_type = parts[1].strip().lower()
+                    type_map = {
+                        "夸克": "quark", "quark": "quark", "q": "quark",
+                        "阿里云": "aliyun", "aliyun": "aliyun", "ali": "aliyun",
+                        "百度": "baidu", "baidu": "baidu",
+                        "全部": "all", "all": "all",
+                    }
+                    if possible_type in type_map:
+                        mapped = type_map[possible_type]
+                        cloud_types = None if mapped == "all" else [mapped]
+                        search_keyword = parts[0].strip()
+                    else:
+                        cloud_types = [self.default_cloud_types] if self.default_cloud_types else None
+                else:
+                    cloud_types = [self.default_cloud_types] if self.default_cloud_types else None
+            # =================================================
 
-            # 调用 PanSou API 搜索
-            results = await self.search_pansou(keyword)
+            # 发送搜索中提示
+            await self.send_reply(event_context, f"正在搜索：{search_keyword}...")
+
+            # 调用 PanSou API 搜索（支持 cloud_types 参数）
+            results = await self.search_pansou(search_keyword, cloud_types)
 
             if not results:
-                await self.send_reply(event_context, f"未找到与 \"{keyword}\" 相关的网盘资源")
+                await self.send_reply(event_context, f"未找到与 \"{search_keyword}\" 相关的网盘资源")
                 return
 
             # 构建合并转发消息并发送
-            await self.send_forward_results(event_context, keyword, results)
+            await self.send_forward_results(event_context, search_keyword, results)
 
             # 阻止事件继续传播
             event_context.prevent_default()
@@ -82,23 +112,24 @@ class DefaultEventListener(EventListener):
             ])
         )
 
-    async def search_pansou(self, keyword: str) -> List[Dict]:
+    async def search_pansou(self, keyword: str, cloud_types: Optional[List[str]] = None) -> List[Dict]:
         """
-        调用 PanSou API 搜索网盘资源
-
-        Args:
-            keyword: 搜索关键词
-
-        Returns:
-            搜索结果列表
+        调用 PanSou API 搜索网盘资源（支持 cloud_types 过滤）
         """
         api_url = f"{self.pansou_api_url.rstrip('/')}/api/search"
+
+        payload = {
+            "kw": keyword,
+            "res": "merge"
+        }
+        if cloud_types is not None:
+            payload["cloud_types"] = cloud_types
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     api_url,
-                    json={"kw": keyword, "res": "merge"},
+                    json=payload,
                     headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
@@ -115,12 +146,6 @@ class DefaultEventListener(EventListener):
     def parse_search_results(self, data: Dict) -> List[Dict]:
         """
         解析 PanSou API 返回的搜索结果
-
-        Args:
-            data: API 返回的原始数据
-
-        Returns:
-            格式化后的结果列表
         """
         results = []
 
@@ -153,13 +178,6 @@ class DefaultEventListener(EventListener):
     def format_result_item(self, item: Dict, cloud_type: str) -> Optional[Dict]:
         """
         格式化单个搜索结果（适配 MergedLink 结构）
-
-        Args:
-            item: 原始结果项（MergedLink 格式）
-            cloud_type: 网盘类型
-
-        Returns:
-            格式化后的结果字典
         """
         # MergedLink 结构: url, password, note, datetime, source, images
         # 获取标题（优先使用 note，兼容旧字段名）
@@ -180,24 +198,17 @@ class DefaultEventListener(EventListener):
         time_str = item.get("datetime") or item.get("time") or item.get("date") or ""
         if time_str:
             try:
-                # 尝试解析时间字符串并格式化
                 import datetime
                 if "T" in time_str:
-                    # 处理ISO格式时间
                     if "+" in time_str:
-                        # 处理带时区的时间
                         time_str = time_str.split("+")[0]
                     elif "Z" in time_str:
-                        # 处理UTC时间
                         time_str = time_str.replace("Z", "")
-                    # 移除微秒部分
                     if "." in time_str:
                         time_str = time_str.split(".")[0]
-                    # 转换为更美观的格式
                     dt = datetime.datetime.fromisoformat(time_str)
                     time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
-                # 如果格式化失败，使用原始时间字符串
                 pass
 
         # 网盘类型映射
@@ -240,11 +251,6 @@ class DefaultEventListener(EventListener):
     ):
         """
         使用合并转发消息发送搜索结果
-
-        Args:
-            event_context: 事件上下文
-            keyword: 搜索关键词
-            results: 搜索结果列表
         """
         # 构建消息列表
         messages = []
@@ -252,19 +258,19 @@ class DefaultEventListener(EventListener):
         for idx, result in enumerate(results, 1):
             # 构建单条消息内容
             content_text = f"【{idx}】{result['title']}\n"
-            content_text += f"📁 类型：{result['cloud_type']}\n"
+            content_text += f"类型：{result['cloud_type']}\n"
 
             if result['link']:
-                content_text += f"🔗 链接：{result['link']}\n"
+                content_text += f"链接：{result['link']}\n"
 
             if result['password']:
-                content_text += f"🔑 密码：{result['password']}\n"
+                content_text += f"密码：{result['password']}\n"
 
             if result['source']:
-                content_text += f"📌 来源：{result['source']}\n"
+                content_text += f"来源：{result['source']}\n"
 
             if result['time']:
-                content_text += f"🕐 时间：{result['time']}"
+                content_text += f"时间：{result['time']}"
 
             # 构建消息内容列表
             content = []
@@ -302,7 +308,7 @@ class DefaultEventListener(EventListener):
         # 发送合并转发消息
         result = await self.forward_sender.send_forward(
             messages=messages,
-            prompt=f"🔍 网盘搜索：{keyword}",
+            prompt=f"网盘搜索：{keyword}",
             summary=f"找到 {len(results)} 个结果",
             source="PanSou 网盘搜索",
             user_id="10000",
@@ -324,35 +330,30 @@ class DefaultEventListener(EventListener):
     ):
         """
         使用普通消息发送搜索结果（作为合并转发失败的备选方案）
-
-        Args:
-            event_context: 事件上下文
-            keyword: 搜索关键词
-            results: 搜索结果列表
         """
         # 构建消息链
         message_chain = []
         
         # 添加标题
-        message_chain.append(platform_message.Plain(text=f"🔍 网盘搜索：{keyword}\n"))
+        message_chain.append(platform_message.Plain(text=f"网盘搜索：{keyword}\n"))
         message_chain.append(platform_message.Plain(text="━━━━━━━━━━━━━━━━\n"))
 
         for idx, result in enumerate(results, 1):
             # 添加结果文本
             result_text = f"\n【{idx}】{result['title']}\n"
-            result_text += f"📁 {result['cloud_type']}"
+            result_text += f" {result['cloud_type']}"
 
             if result['link']:
-                result_text += f"\n🔗 {result['link']}"
+                result_text += f"\n {result['link']}"
 
             if result['password']:
-                result_text += f"\n🔑 密码：{result['password']}"
+                result_text += f"\n密码：{result['password']}"
 
             if result['source']:
-                result_text += f"\n📌 来源：{result['source']}"
+                result_text += f"\n来源：{result['source']}"
 
             if result['time']:
-                result_text += f"\n🕐 时间：{result['time']}"
+                result_text += f"\n时间：{result['time']}"
 
             # 先添加图片（如果有）
             if result.get("images") and isinstance(result["images"], list):
